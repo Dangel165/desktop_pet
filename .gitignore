@@ -1,0 +1,6 @@
+pet_config.json
+build/
+DesktopPet.spec
+__pycache__/
+.pet_cache/
+*.pyc
