@@ -1,6 +1,27 @@
+# Personal settings
 pet_config.json
-build/
-DesktopPet.spec
+.env
+
+# Python cache
 __pycache__/
-.pet_cache/
 *.pyc
+*.pyo
+*.pyd
+
+# Local pet cache
+.pet_cache/
+
+# Build output
+build/
+dist/
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test and tool cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
