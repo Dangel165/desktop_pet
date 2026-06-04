@@ -97,7 +97,7 @@ run_portable.bat
 프로그램을 실행할 때마다 캐릭터 선택 창이 뜹니다.
 
 - `기존 캐릭터`: 마지막으로 선택한 캐릭터를 사용합니다. 선택한 캐릭터가 없으면 기본 캐릭터를 사용합니다.
-- `새로운 캐릭터`: `characters` 폴더에서 새 캐릭터 파일을 선택합니다.
+- `새로운 캐릭터`: 움직이는 캐릭터 폴더 또는 PNG/GIF 파일 하나를 선택합니다.
 
 새 캐릭터 파일은 아래 폴더에 넣으면 됩니다.
 
@@ -105,7 +105,11 @@ run_portable.bat
 characters
 ```
 
-다른 위치의 파일을 선택하면 프로그램이 자동으로 `characters` 폴더 안으로 복사한 뒤 사용합니다.
+움직이는 캐릭터는 상태별 GIF가 들어 있는 폴더를 통째로 선택하면 됩니다.
+
+단일 캐릭터는 PNG/GIF/JPG/BMP 파일 하나를 선택하면 됩니다.
+
+다른 위치의 폴더나 파일을 선택하면 프로그램이 자동으로 `characters` 폴더 안으로 복사한 뒤 사용합니다.
 
 ## 조작 방법
 
@@ -164,19 +168,30 @@ API 키와 설정은 이 폴더의 `pet_config.json`에 저장됩니다. 키를 
 
 ## 원하는 캐릭터 사용하기
 
-`characters` 폴더에 아래 파일 중 하나를 넣으면 캐릭터로 사용할 수 있습니다.
+단일 캐릭터는 `characters` 폴더에 아래 파일 중 하나를 넣으면 사용할 수 있습니다.
 
 - `character.gif`
 - `character.png`
 - `character.jpg`
 - `character.bmp`
 
-GIF 애니메이션을 상태별로 쓰고 싶다면 이런 이름으로 넣을 수 있습니다.
+움직이는 캐릭터를 상태별로 쓰고 싶다면 캐릭터 전용 폴더를 만들고 이런 이름으로 넣을 수 있습니다.
 
 - `red_stop_right.gif`
 - `red_stop_left.gif`
 - `red_run_right.gif`
 - `red_run_left.gif`
+
+예시:
+
+```text
+characters/my_pet/red_stop_right.gif
+characters/my_pet/red_stop_left.gif
+characters/my_pet/red_run_right.gif
+characters/my_pet/red_run_left.gif
+```
+
+프로그램 실행 시 `새로운 캐릭터` → `움직이는 캐릭터 폴더`를 선택하고 `characters/my_pet` 폴더를 고르면 됩니다.
 
 이렇게 넣으면 이동 방향과 상태에 따라 GIF가 바뀝니다.
 

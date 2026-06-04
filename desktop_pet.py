@@ -418,7 +418,11 @@ class Sticker(QtWidgets.QMainWindow):
         # 쓸 수 있는 캐릭터 파일을 순서대로 찾아봅니다.
         if self.brain.selected_character:
             selected = Path(self.brain.selected_character)
-            if selected.exists():
+            if selected.is_dir():
+                folder_character = find_character_in_folder(selected)
+                if folder_character:
+                    return folder_character
+            elif selected.exists():
                 return selected
 
         candidates = [
@@ -1051,6 +1055,63 @@ def choose_startup_character(parent, brain):
     if message.clickedButton() != new_button:
         return
 
+    type_message = QtWidgets.QMessageBox(parent)
+    type_message.setWindowTitle("새 캐릭터 방식")
+    type_message.setText("새 캐릭터를 어떤 방식으로 고를까요?")
+    type_message.setInformativeText(
+        "움직이는 캐릭터는 상태별 GIF가 들어 있는 폴더를 고르세요.\n"
+        "그냥 이미지 하나만 쓰려면 PNG/GIF 파일을 고르면 됩니다."
+    )
+    folder_button = type_message.addButton("움직이는 캐릭터 폴더", QtWidgets.QMessageBox.AcceptRole)
+    file_button = type_message.addButton("PNG/GIF 파일", QtWidgets.QMessageBox.ActionRole)
+    cancel_button = type_message.addButton("취소", QtWidgets.QMessageBox.RejectRole)
+    type_message.setDefaultButton(folder_button)
+    type_message.exec_()
+
+    clicked = type_message.clickedButton()
+    if clicked == cancel_button:
+        return
+    if clicked == folder_button:
+        choose_character_folder(parent, brain)
+        return
+
+    choose_character_file(parent, brain)
+
+
+def choose_character_folder(parent, brain):
+    # 상태별 GIF가 들어 있는 폴더를 통째로 선택합니다.
+    folder_path = QtWidgets.QFileDialog.getExistingDirectory(
+        parent,
+        "움직이는 캐릭터 폴더 선택",
+        str(CHARACTERS_DIR),
+    )
+    if not folder_path:
+        return
+
+    selected = Path(folder_path)
+    character_file = find_character_in_folder(selected)
+    if not character_file:
+        QtWidgets.QMessageBox.warning(
+            parent,
+            "캐릭터 없음",
+            "선택한 폴더에서 사용할 캐릭터 파일을 찾지 못했습니다.\n"
+            "red_stop_right.gif, character.gif, character.png 같은 파일을 넣어주세요.",
+        )
+        return
+
+    target = selected
+    try:
+        if not selected.resolve().is_relative_to(CHARACTERS_DIR.resolve()):
+            target = unique_character_folder_path(selected.name)
+            shutil.copytree(selected, target)
+    except Exception:
+        target = selected
+
+    brain.set_selected_character(target)
+
+
+def choose_character_file(parent, brain):
+    # PNG/GIF 같은 파일 하나를 선택합니다.
     file_path, _selected_filter = QtWidgets.QFileDialog.getOpenFileName(
         parent,
         "새 캐릭터 선택",
@@ -1072,6 +1133,41 @@ def choose_startup_character(parent, brain):
     brain.set_selected_character(target)
 
 
+def find_character_in_folder(folder):
+    # 움직이는 캐릭터 폴더 안에서 시작 이미지로 쓸 파일을 찾습니다.
+    folder = Path(folder)
+    preferred_names = [
+        "red_stop_right.gif",
+        "stop_right.gif",
+        "character.gif",
+        "character.png",
+        "character.jpg",
+        "character.jpeg",
+        "character.bmp",
+    ]
+    for name in preferred_names:
+        path = folder / name
+        if path.exists():
+            return path
+
+    patterns = [
+        "*stop*right*.gif",
+        "*idle*right*.gif",
+        "*run*right*.gif",
+        "*walk*right*.gif",
+        "*.gif",
+        "*.png",
+        "*.jpg",
+        "*.jpeg",
+        "*.bmp",
+    ]
+    for pattern in patterns:
+        matches = sorted(folder.glob(pattern))
+        if matches:
+            return matches[0]
+    return None
+
+
 def unique_character_path(filename):
     # 같은 이름이 있으면 뒤에 번호를 붙여서 덮어쓰지 않습니다.
     target = CHARACTERS_DIR / filename
@@ -1085,6 +1181,20 @@ def unique_character_path(filename):
         if not candidate.exists():
             return candidate
     return CHARACTERS_DIR / f"{stem}_copy{suffix}"
+
+
+def unique_character_folder_path(folder_name):
+    # 같은 폴더 이름이 있으면 뒤에 번호를 붙여서 덮어쓰지 않습니다.
+    safe_name = folder_name.strip() or "character_set"
+    target = CHARACTERS_DIR / safe_name
+    if not target.exists():
+        return target
+
+    for index in range(2, 1000):
+        candidate = CHARACTERS_DIR / f"{safe_name}_{index}"
+        if not candidate.exists():
+            return candidate
+    return CHARACTERS_DIR / f"{safe_name}_copy"
 
 
 def main():
