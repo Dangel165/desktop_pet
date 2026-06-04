@@ -406,6 +406,9 @@ class Sticker(QtWidgets.QMainWindow):
         self.movie = None
         self.pixmap_frames = []
         self.pixmap_index = 0
+        self.sequence_frames = {}
+        self.sequence_key = ""
+        self.sequence_index = 0
         self.chat_window = ChatWindow(self.brain)
         self.chat_window.closed.connect(self.resume_following)
 
@@ -419,9 +422,8 @@ class Sticker(QtWidgets.QMainWindow):
         if self.brain.selected_character:
             selected = Path(self.brain.selected_character)
             if selected.is_dir():
-                folder_character = find_character_in_folder(selected)
-                if folder_character:
-                    return folder_character
+                if has_frame_sequence(selected) or find_character_in_folder(selected):
+                    return selected
             elif selected.exists():
                 return selected
 
@@ -489,9 +491,22 @@ class Sticker(QtWidgets.QMainWindow):
         self.setWindowOpacity(self.opacity)
 
     def apply_image(self):
+        # 프레임 폴더가 있으면 프레임 애니메이션을 씁니다.
         # GIF가 있으면 GIF를 쓰고, 이미지가 있으면 이미지를 씁니다.
         # 아무것도 없으면 직접 그린 기본 캐릭터를 씁니다.
         self.fallback_timer.stop()
+        self.sequence_frames = {}
+        self.sequence_key = ""
+
+        if self.img_path and self.img_path.is_dir():
+            if self.apply_frame_sequence_folder(self.img_path):
+                return
+
+            folder_character = find_character_in_folder(self.img_path)
+            if folder_character:
+                self.img_path = folder_character
+                self.apply_image()
+                return
 
         if self.img_path and self.img_path.exists() and self.img_path.suffix.lower() == ".gif":
             self.apply_gif(self.img_path)
@@ -502,6 +517,74 @@ class Sticker(QtWidgets.QMainWindow):
             return
 
         self.apply_fallback_pet()
+
+    def apply_frame_sequence_folder(self, folder):
+        # walk_right_0.png 같은 프레임 묶음을 읽습니다.
+        frames = load_frame_sequences(folder)
+        if not frames:
+            return False
+
+        self.movie = None
+        self.label.setMovie(None)
+        self.sequence_frames = frames
+        self.sequence_index = 0
+        self.set_sequence_key_for_state()
+        self.show_current_sequence_frame()
+
+        try:
+            self.fallback_timer.timeout.disconnect()
+        except TypeError:
+            pass
+        self.fallback_timer.timeout.connect(self.next_sequence_frame)
+        self.fallback_timer.start(110)
+        return True
+
+    def set_sequence_key_for_state(self):
+        # 프로그램 안의 상태 이름을 프레임 파일 이름과 맞춥니다.
+        state_name = "walk" if self.state == "run" else "idle"
+        preferred = f"{state_name}_{self.facing}"
+        fallback_order = [
+            preferred,
+            f"walk_{self.facing}",
+            f"idle_{self.facing}",
+            "walk_right",
+            "idle_right",
+            "walk_left",
+            "idle_left",
+        ]
+        for key in fallback_order:
+            if key in self.sequence_frames:
+                if self.sequence_key != key:
+                    self.sequence_key = key
+                    self.sequence_index = 0
+                return
+
+        first_key = next(iter(self.sequence_frames))
+        if self.sequence_key != first_key:
+            self.sequence_key = first_key
+            self.sequence_index = 0
+
+    def show_current_sequence_frame(self):
+        # 지금 상태에 맞는 프레임 한 장을 화면에 보여줍니다.
+        if not self.sequence_key or self.sequence_key not in self.sequence_frames:
+            return
+
+        frames = self.sequence_frames[self.sequence_key]
+        if not frames:
+            return
+
+        pixmap = frames[self.sequence_index % len(frames)]
+        self.label.setPixmap(pixmap)
+        self.label.resize(pixmap.width(), pixmap.height())
+        self.setGeometry(int(self.xy[0]), int(self.xy[1]), pixmap.width(), pixmap.height())
+
+    def next_sequence_frame(self):
+        # 프레임을 한 장씩 넘겨서 움직이는 것처럼 보이게 합니다.
+        if not self.sequence_key or self.sequence_key not in self.sequence_frames:
+            return
+        frames = self.sequence_frames[self.sequence_key]
+        self.sequence_index = (self.sequence_index + 1) % len(frames)
+        self.show_current_sequence_frame()
 
     def apply_gif(self, path):
         self.movie = QtGui.QMovie(str(path))
@@ -530,6 +613,7 @@ class Sticker(QtWidgets.QMainWindow):
 
     def apply_fallback_pet(self):
         # 이미지 파일이 없을 때 보여줄 기본 캐릭터를 만듭니다.
+        self.sequence_frames = {}
         self.pixmap_frames = [self.draw_pet_frame(i) for i in range(6)]
         self.pixmap_index = 0
         self.label.setPixmap(self.pixmap_frames[0])
@@ -918,6 +1002,11 @@ class Sticker(QtWidgets.QMainWindow):
         self.before_xy = self.xy[:]
 
     def switch_image_for_state(self):
+        if self.sequence_frames:
+            self.set_sequence_key_for_state()
+            self.show_current_sequence_frame()
+            return
+
         # red_run_left.gif 같은 파일이 있으면 상태에 맞게 바꿉니다.
         if self.img_path and self.img_path.exists():
             name = self.img_path.name
@@ -1059,10 +1148,10 @@ def choose_startup_character(parent, brain):
     type_message.setWindowTitle("새 캐릭터 방식")
     type_message.setText("새 캐릭터를 어떤 방식으로 고를까요?")
     type_message.setInformativeText(
-        "움직이는 캐릭터는 상태별 GIF가 들어 있는 폴더를 고르세요.\n"
+        "움직이는 캐릭터는 walk_right_0.png 같은 프레임이 들어 있는 폴더를 고르세요.\n"
         "그냥 이미지 하나만 쓰려면 PNG/GIF 파일을 고르면 됩니다."
     )
-    folder_button = type_message.addButton("움직이는 캐릭터 폴더", QtWidgets.QMessageBox.AcceptRole)
+    folder_button = type_message.addButton("프레임 폴더", QtWidgets.QMessageBox.AcceptRole)
     file_button = type_message.addButton("PNG/GIF 파일", QtWidgets.QMessageBox.ActionRole)
     cancel_button = type_message.addButton("취소", QtWidgets.QMessageBox.RejectRole)
     type_message.setDefaultButton(folder_button)
@@ -1095,7 +1184,7 @@ def choose_character_folder(parent, brain):
             parent,
             "캐릭터 없음",
             "선택한 폴더에서 사용할 캐릭터 파일을 찾지 못했습니다.\n"
-            "red_stop_right.gif, character.gif, character.png 같은 파일을 넣어주세요.",
+            "walk_right_0.png, idle_right_0.png, character.png 같은 파일을 넣어주세요.",
         )
         return
 
@@ -1136,6 +1225,9 @@ def choose_character_file(parent, brain):
 def find_character_in_folder(folder):
     # 움직이는 캐릭터 폴더 안에서 시작 이미지로 쓸 파일을 찾습니다.
     folder = Path(folder)
+    if has_frame_sequence(folder):
+        return find_first_sequence_file(folder)
+
     preferred_names = [
         "red_stop_right.gif",
         "stop_right.gif",
@@ -1166,6 +1258,58 @@ def find_character_in_folder(folder):
         if matches:
             return matches[0]
     return None
+
+
+def has_frame_sequence(folder):
+    # .pet_cache처럼 walk_right_0.png 형식의 프레임이 있는지 확인합니다.
+    return find_first_sequence_file(folder) is not None
+
+
+def find_first_sequence_file(folder):
+    # 프레임 폴더에서 첫 번째로 쓸 만한 PNG를 찾습니다.
+    folder = Path(folder)
+    preferred_patterns = [
+        "idle_right_*.png",
+        "walk_right_*.png",
+        "idle_left_*.png",
+        "walk_left_*.png",
+        "jump_right_*.png",
+        "jump_left_*.png",
+    ]
+    for pattern in preferred_patterns:
+        matches = sorted(folder.glob(pattern), key=frame_sort_key)
+        if matches:
+            return matches[0]
+    return None
+
+
+def load_frame_sequences(folder):
+    # 상태별 PNG 프레임을 읽어서 딕셔너리로 만듭니다.
+    folder = Path(folder)
+    sequences = {}
+    for state in ("idle", "walk", "jump"):
+        for facing in ("right", "left"):
+            key = f"{state}_{facing}"
+            paths = sorted(folder.glob(f"{key}_*.png"), key=frame_sort_key)
+            pixmaps = []
+            for path in paths:
+                pixmap = QtGui.QPixmap(str(path))
+                if not pixmap.isNull():
+                    pixmaps.append(pixmap)
+            if pixmaps:
+                sequences[key] = pixmaps
+    return sequences
+
+
+def frame_sort_key(path):
+    # 파일 이름 끝의 숫자를 기준으로 0, 1, 2 순서대로 정렬합니다.
+    stem = Path(path).stem
+    last_part = stem.rsplit("_", 1)[-1]
+    try:
+        number = int(last_part)
+    except ValueError:
+        number = 0
+    return number
 
 
 def unique_character_path(filename):
