@@ -1,5 +1,6 @@
 import math
 import json
+import shutil
 import sys
 import urllib.error
 import urllib.request
@@ -15,6 +16,8 @@ if getattr(sys, "frozen", False):
 else:
     BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "pet_config.json"
+CHARACTERS_DIR = BASE_DIR / "characters"
+LOCK_PATH = BASE_DIR / "desktop_pet.lock"
 
 
 # OpenAI한테 물어보는 일을 뒤에서 해주는 친구입니다.
@@ -40,6 +43,7 @@ class PetBrain:
         self.api_key = ""
         self.model = "gpt-5.2"
         self.use_openai = False
+        self.selected_character = ""
         self.history = []
         self.load_config()
 
@@ -155,6 +159,7 @@ class PetBrain:
         self.pet_name = config.get("pet_name", self.pet_name) or self.pet_name
         self.model = config.get("model", self.model) or self.model
         self.use_openai = bool(config.get("use_openai", False) and self.api_key)
+        self.selected_character = config.get("selected_character", "")
 
     def save_config(self):
         # 이름과 API 설정을 파일에 저장합니다.
@@ -163,6 +168,7 @@ class PetBrain:
             "pet_name": self.pet_name,
             "model": self.model,
             "use_openai": self.use_openai,
+            "selected_character": self.selected_character,
         }
         CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
 
@@ -180,6 +186,11 @@ class PetBrain:
         self.pet_name = cleaned[:24]
         self.save_config()
         return True
+
+    def set_selected_character(self, path):
+        # 마지막으로 고른 캐릭터를 기억합니다.
+        self.selected_character = str(path) if path else ""
+        self.save_config()
 
 
 # 펫이랑 대화하는 작은 창입니다.
@@ -335,11 +346,12 @@ class OpenAISettingsDialog(QtWidgets.QDialog):
 
 # 화면 위를 돌아다니는 진짜 펫 창입니다.
 class Sticker(QtWidgets.QMainWindow):
-    def __init__(self, img_path=None, xy=None, size=1.0, on_top=True):
+    def __init__(self, brain, img_path=None, xy=None, size=1.0, on_top=True):
         super().__init__()
         # 기본 정보입니다.
         self.name = "Desktop Pet"
         self.base_dir = BASE_DIR
+        self.brain = brain
         self.img_path = Path(img_path) if img_path else self.find_default_image()
         self.size = size
         self.on_top = on_top
@@ -394,7 +406,6 @@ class Sticker(QtWidgets.QMainWindow):
         self.movie = None
         self.pixmap_frames = []
         self.pixmap_index = 0
-        self.brain = PetBrain()
         self.chat_window = ChatWindow(self.brain)
         self.chat_window.closed.connect(self.resume_following)
 
@@ -405,7 +416,16 @@ class Sticker(QtWidgets.QMainWindow):
 
     def find_default_image(self):
         # 쓸 수 있는 캐릭터 파일을 순서대로 찾아봅니다.
+        if self.brain.selected_character:
+            selected = Path(self.brain.selected_character)
+            if selected.exists():
+                return selected
+
         candidates = [
+            self.base_dir / "characters" / "character.gif",
+            self.base_dir / "characters" / "character.png",
+            self.base_dir / "characters" / "character.jpg",
+            self.base_dir / "characters" / "character.bmp",
             self.base_dir / "gif" / "amongus" / "red_stop_right.gif",
             self.base_dir / "gif" / "stop_right.gif",
             self.base_dir / "assets" / "stop_right.gif",
@@ -1000,11 +1020,88 @@ class Sticker(QtWidgets.QMainWindow):
         self.follow_reaction_until = 0
 
 
+def ensure_characters_folder():
+    # 캐릭터를 넣는 전용 폴더를 만듭니다.
+    CHARACTERS_DIR.mkdir(exist_ok=True)
+    readme_path = CHARACTERS_DIR / "README.txt"
+    if not readme_path.exists():
+        readme_path.write_text(
+            "여기에 character.gif, character.png 같은 캐릭터 파일을 넣으세요.\n"
+            "상태별 GIF를 쓰려면 red_stop_right.gif, red_stop_left.gif, "
+            "red_run_right.gif, red_run_left.gif처럼 넣을 수 있습니다.\n",
+            encoding="utf-8",
+        )
+
+
+def choose_startup_character(parent, brain):
+    # 실행할 때마다 기존 캐릭터를 쓸지 새 캐릭터를 고를지 물어봅니다.
+    ensure_characters_folder()
+    message = QtWidgets.QMessageBox(parent)
+    message.setWindowTitle("캐릭터 선택")
+    message.setText("이번 실행에서 사용할 캐릭터를 선택하세요.")
+    message.setInformativeText(
+        "기존 캐릭터를 고르면 마지막으로 선택한 캐릭터 또는 기본 캐릭터를 사용합니다.\n"
+        "새로운 캐릭터를 고르면 characters 폴더의 이미지/GIF를 선택합니다."
+    )
+    existing_button = message.addButton("기존 캐릭터", QtWidgets.QMessageBox.AcceptRole)
+    new_button = message.addButton("새로운 캐릭터", QtWidgets.QMessageBox.ActionRole)
+    message.setDefaultButton(existing_button)
+    message.exec_()
+
+    if message.clickedButton() != new_button:
+        return
+
+    file_path, _selected_filter = QtWidgets.QFileDialog.getOpenFileName(
+        parent,
+        "새 캐릭터 선택",
+        str(CHARACTERS_DIR),
+        "캐릭터 파일 (*.gif *.png *.jpg *.jpeg *.bmp)",
+    )
+    if not file_path:
+        return
+
+    selected = Path(file_path)
+    target = selected
+    try:
+        if not selected.resolve().is_relative_to(CHARACTERS_DIR.resolve()):
+            target = unique_character_path(selected.name)
+            shutil.copy2(selected, target)
+    except Exception:
+        target = selected
+
+    brain.set_selected_character(target)
+
+
+def unique_character_path(filename):
+    # 같은 이름이 있으면 뒤에 번호를 붙여서 덮어쓰지 않습니다.
+    target = CHARACTERS_DIR / filename
+    if not target.exists():
+        return target
+
+    stem = target.stem
+    suffix = target.suffix
+    for index in range(2, 1000):
+        candidate = CHARACTERS_DIR / f"{stem}_{index}{suffix}"
+        if not candidate.exists():
+            return candidate
+    return CHARACTERS_DIR / f"{stem}_copy{suffix}"
+
+
 def main():
     # 프로그램 시작점입니다.
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)
-    sticker = Sticker(size=1.0, on_top=True)
+
+    # 이미 펫이 켜져 있으면 두 번째 펫은 실행하지 않습니다.
+    lock = QtCore.QLockFile(str(LOCK_PATH))
+    if not lock.tryLock(100):
+        QtWidgets.QMessageBox.information(None, "이미 실행 중", "데스크탑 펫이 이미 실행 중입니다.")
+        return
+    app.desktop_pet_lock = lock
+
+    brain = PetBrain()
+    choose_startup_character(None, brain)
+    sticker = Sticker(brain=brain, size=1.0, on_top=True)
     sticker.run()
     sys.exit(app.exec_())
 
