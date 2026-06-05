@@ -44,6 +44,7 @@ class PetBrain:
         self.model = "gpt-5.2"
         self.use_openai = False
         self.selected_character = ""
+        self.character_scale = 1.0
         self.history = []
         self.load_config()
 
@@ -160,6 +161,7 @@ class PetBrain:
         self.model = config.get("model", self.model) or self.model
         self.use_openai = bool(config.get("use_openai", False) and self.api_key)
         self.selected_character = config.get("selected_character", "")
+        self.character_scale = float(config.get("character_scale", self.character_scale) or 1.0)
 
     def save_config(self):
         # 이름과 API 설정을 파일에 저장합니다.
@@ -169,6 +171,7 @@ class PetBrain:
             "model": self.model,
             "use_openai": self.use_openai,
             "selected_character": self.selected_character,
+            "character_scale": self.character_scale,
         }
         CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
 
@@ -190,6 +193,11 @@ class PetBrain:
     def set_selected_character(self, path):
         # 마지막으로 고른 캐릭터를 기억합니다.
         self.selected_character = str(path) if path else ""
+        self.save_config()
+
+    def set_character_scale(self, scale):
+        # 캐릭터 크기 배율을 저장합니다.
+        self.character_scale = max(0.2, min(3.0, float(scale)))
         self.save_config()
 
 
@@ -353,7 +361,7 @@ class Sticker(QtWidgets.QMainWindow):
         self.base_dir = BASE_DIR
         self.brain = brain
         self.img_path = Path(img_path) if img_path else self.find_default_image()
-        self.size = size
+        self.size = max(0.2, min(3.0, brain.character_scale or size))
         self.on_top = on_top
 
         start = xy or [120, 500]
@@ -520,7 +528,7 @@ class Sticker(QtWidgets.QMainWindow):
 
     def apply_frame_sequence_folder(self, folder):
         # walk_right_0.png 같은 프레임 묶음을 읽습니다.
-        frames = load_frame_sequences(folder)
+        frames = load_frame_sequences(folder, self.size)
         if not frames:
             return False
 
@@ -604,12 +612,16 @@ class Sticker(QtWidgets.QMainWindow):
             self.apply_fallback_pet()
             return
 
-        width = max(1, int(pixmap.width() * self.size))
-        height = max(1, int(pixmap.height() * self.size))
-        pixmap = pixmap.scaled(width, height, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+        pixmap = self.scale_pixmap(pixmap)
         self.label.setPixmap(pixmap)
         self.label.resize(pixmap.width(), pixmap.height())
         self.setGeometry(int(self.xy[0]), int(self.xy[1]), pixmap.width(), pixmap.height())
+
+    def scale_pixmap(self, pixmap):
+        # 가로/세로 비율을 유지해서 납작해지지 않게 크기만 바꿉니다.
+        width = max(1, int(pixmap.width() * self.size))
+        height = max(1, int(pixmap.height() * self.size))
+        return pixmap.scaled(width, height, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
 
     def apply_fallback_pet(self):
         # 이미지 파일이 없을 때 보여줄 기본 캐릭터를 만듭니다.
@@ -1197,6 +1209,7 @@ def choose_character_folder(parent, brain):
         target = selected
 
     brain.set_selected_character(target)
+    ask_character_scale(parent, brain)
 
 
 def choose_character_file(parent, brain):
@@ -1220,6 +1233,22 @@ def choose_character_file(parent, brain):
         target = selected
 
     brain.set_selected_character(target)
+    ask_character_scale(parent, brain)
+
+
+def ask_character_scale(parent, brain):
+    # 새 캐릭터를 고른 뒤 크기 배율을 물어봅니다.
+    percent, ok = QtWidgets.QInputDialog.getDouble(
+        parent,
+        "캐릭터 크기",
+        "캐릭터 크기 배율을 정하세요. 100%가 원래 크기입니다.",
+        brain.character_scale * 100,
+        20,
+        300,
+        0,
+    )
+    if ok:
+        brain.set_character_scale(percent / 100)
 
 
 def find_character_in_folder(folder):
@@ -1283,7 +1312,7 @@ def find_first_sequence_file(folder):
     return None
 
 
-def load_frame_sequences(folder):
+def load_frame_sequences(folder, scale=1.0):
     # 상태별 PNG 프레임을 읽어서 딕셔너리로 만듭니다.
     folder = Path(folder)
     sequences = {}
@@ -1295,10 +1324,18 @@ def load_frame_sequences(folder):
             for path in paths:
                 pixmap = QtGui.QPixmap(str(path))
                 if not pixmap.isNull():
-                    pixmaps.append(pixmap)
+                    pixmaps.append(scale_frame_pixmap(pixmap, scale))
             if pixmaps:
                 sequences[key] = pixmaps
     return sequences
+
+
+def scale_frame_pixmap(pixmap, scale):
+    # 프레임도 비율을 유지해서 확대/축소합니다.
+    scale = max(0.2, min(3.0, float(scale or 1.0)))
+    width = max(1, int(pixmap.width() * scale))
+    height = max(1, int(pixmap.height() * scale))
+    return pixmap.scaled(width, height, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
 
 
 def frame_sort_key(path):
